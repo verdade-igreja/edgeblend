@@ -5,7 +5,9 @@ use crate::apply::{self, GeometryUndo, Op};
 use crate::state;
 use crate::token::{query_param, token_eq};
 use anyhow::{Context, Result};
+use edgeblend_config::history::{self, Service as History, Source};
 use edgeblend_config::Config;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,8 +23,18 @@ pub const MAX_BODY: usize = 4 * 1024;
 const PORT_TRIES: u16 = 10;
 const STOP_JOIN_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Called after every successful phone edit, with no lock held (persist, repaint).
-pub type OnChange = Arc<dyn Fn() + Send + Sync>;
+/// What the phone changed in the live config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// An edit op was applied.
+    Edit,
+    /// A history version replaced the live config (already saved to disk by the history).
+    /// `displays_changed`: source/output differ, so a running engine must be restarted.
+    Restored { displays_changed: bool },
+}
+
+/// Called after every successful phone change, with no lock held (persist, repaint, ...).
+pub type OnChange = Arc<dyn Fn(Change) + Send + Sync>;
 
 pub struct Ctx {
     pub cfg: Arc<Mutex<Config>>,
@@ -31,6 +43,35 @@ pub struct Ctx {
     pub undo: Mutex<Vec<GeometryUndo>>,
     pub token: String,
     pub on_change: OnChange,
+    /// Config version history; `None` disables the history endpoints.
+    pub history: Option<Arc<History>>,
+}
+
+/// One row of `GET /api/history` (newest first).
+#[derive(Debug, Serialize)]
+pub struct HistoryRow {
+    pub id: String,
+    /// RFC 3339 UTC; the phone shows it in its local time.
+    pub created: String,
+    pub created_ms: i64,
+    pub milestone: bool,
+    pub name: Option<String>,
+    pub source: Source,
+    /// Unreadable file: listed, but cannot be restored.
+    pub broken: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MilestoneReq {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreReq {
+    id: String,
 }
 
 #[derive(Debug)]
@@ -60,7 +101,7 @@ pub enum BodyError {
     Unreadable,
 }
 
-/// Handle one request. `read_body` is only called for authenticated edits, so an
+/// Handle one request. `read_body` is only called for authenticated POSTs, so an
 /// unauthenticated client never gets its body read.
 pub fn route(
     ctx: &Ctx,
@@ -83,6 +124,63 @@ pub fn route(
         return Reply::text(403, "forbidden");
     }
     match (method, path) {
+        ("GET", "/api/history") => match &ctx.history {
+            Some(h) => Reply::json(&history_rows(h)),
+            None => Reply::text(404, "history not available"),
+        },
+        ("POST", "/api/milestone") => {
+            let Some(h) = &ctx.history else { return Reply::text(404, "history not available") };
+            let body = match body_reply(read_body()) {
+                Ok(b) => b,
+                Err(r) => return r,
+            };
+            let req: MilestoneReq = match serde_json::from_slice(&body) {
+                Ok(r) => r,
+                Err(e) => return Reply::text(400, format!("bad request: {e}")),
+            };
+            match h.save_milestone(req.name, Source::Remote) {
+                Ok(id) => Reply::json(&serde_json::json!({ "id": id })),
+                Err(e) => {
+                    eprintln!("remote: milestone failed: {e:#}");
+                    Reply::text(500, "could not save the milestone")
+                }
+            }
+        }
+        ("POST", "/api/restore") => {
+            let Some(h) = &ctx.history else { return Reply::text(404, "history not available") };
+            let body = match body_reply(read_body()) {
+                Ok(b) => b,
+                Err(r) => return r,
+            };
+            let req: RestoreReq = match serde_json::from_slice(&body) {
+                Ok(r) => r,
+                Err(e) => return Reply::text(400, format!("bad request: {e}")),
+            };
+            if !history::valid_id(&req.id) {
+                return Reply::text(400, "invalid version id");
+            }
+            match h.list().into_iter().find(|e| e.id == req.id) {
+                None => return Reply::text(404, "no such version"),
+                Some(e) if e.broken.is_some() => return Reply::text(409, "that version file is unreadable"),
+                Some(_) => {}
+            }
+            let displays = |c: &Config| (c.source.clone(), c.output.clone());
+            let before = displays(&ctx.cfg.lock().unwrap());
+            // Service::restore locks the config itself and writes blend.toml: no lock held here.
+            if let Err(e) = h.restore(&req.id) {
+                eprintln!("remote: restore {} failed: {e:#}", req.id);
+                return Reply::text(400, "could not restore that version");
+            }
+            let snap = {
+                let cfg = ctx.cfg.lock().unwrap();
+                let displays_changed = displays(&cfg) != before;
+                let rev = ctx.rev.fetch_add(1, Ordering::SeqCst) + 1;
+                (state::snapshot(&cfg, rev), displays_changed)
+            };
+            ctx.undo.lock().unwrap().clear(); // geometry undo no longer matches
+            (ctx.on_change)(Change::Restored { displays_changed: snap.1 });
+            Reply::json(&snap.0)
+        }
         ("GET", "/api/state") => {
             let cfg = ctx.cfg.lock().unwrap();
             let snap = state::snapshot(&cfg, ctx.rev.load(Ordering::SeqCst));
@@ -90,10 +188,9 @@ pub fn route(
             Reply::json(&snap)
         }
         ("POST", "/api/edit") => {
-            let body = match read_body() {
+            let body = match body_reply(read_body()) {
                 Ok(b) => b,
-                Err(BodyError::TooLarge) => return Reply::text(413, "payload too large"),
-                Err(BodyError::Unreadable) => return Reply::text(400, "bad body"),
+                Err(r) => return r,
             };
             let op: Op = match serde_json::from_slice(&body) {
                 Ok(op) => op,
@@ -109,12 +206,37 @@ pub fn route(
                 let rev = ctx.rev.fetch_add(1, Ordering::SeqCst) + 1;
                 state::snapshot(&cfg, rev)
             };
-            (ctx.on_change)();
+            if let Some(h) = &ctx.history {
+                h.hint_source(Source::Remote); // label the next auto version
+            }
+            (ctx.on_change)(Change::Edit);
             Reply::json(&snap)
         }
-        (_, "/api/state" | "/api/edit") => Reply::text(405, "method not allowed"),
+        (_, "/api/state" | "/api/edit" | "/api/history" | "/api/milestone" | "/api/restore") => Reply::text(405, "method not allowed"),
         _ => Reply::text(404, "not found"),
     }
+}
+
+fn body_reply(body: Result<Vec<u8>, BodyError>) -> Result<Vec<u8>, Reply> {
+    body.map_err(|e| match e {
+        BodyError::TooLarge => Reply::text(413, "payload too large"),
+        BodyError::Unreadable => Reply::text(400, "bad body"),
+    })
+}
+
+fn history_rows(h: &History) -> Vec<HistoryRow> {
+    h.list()
+        .into_iter()
+        .map(|e| HistoryRow {
+            id: e.id,
+            created: e.created,
+            created_ms: e.created_ms,
+            milestone: e.kind == history::Kind::Milestone,
+            name: e.name,
+            source: e.source,
+            broken: e.broken.is_some(),
+        })
+        .collect()
 }
 
 fn read_limited(req: &mut tiny_http::Request) -> Result<Vec<u8>, BodyError> {
@@ -231,11 +353,116 @@ mod tests {
             rev: Arc::new(AtomicU64::new(0)),
             undo: Mutex::new(Vec::new()),
             token: T.into(),
-            on_change: Arc::new(move || {
+            on_change: Arc::new(move |_| {
                 c.fetch_add(1, Ordering::SeqCst);
             }),
+            history: None,
         };
         (ctx, calls)
+    }
+
+    /// Temp dir with a blend.toml path whose sibling `history/` the Service uses.
+    struct Tmp(std::path::PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ctx_with_history() -> (Ctx, Arc<std::sync::Mutex<Vec<Change>>>, Tmp) {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "edgeblend-remote-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut c, _) = ctx();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        c.on_change = Arc::new(move |ch| s.lock().unwrap().push(ch));
+        c.history = Some(History::start(c.cfg.clone(), dir.join("blend.toml")));
+        (c, seen, Tmp(dir))
+    }
+
+    #[test]
+    fn history_endpoints_need_token() {
+        let (c, _, _tmp) = ctx_with_history();
+        assert_eq!(route(&c, "GET", "/api/history", no_body).status, 403);
+        assert_eq!(route(&c, "POST", "/api/milestone?t=bad", no_body).status, 403);
+        assert_eq!(route(&c, "POST", "/api/restore", no_body).status, 403);
+    }
+
+    #[test]
+    fn history_disabled_is_404() {
+        let (c, _) = ctx();
+        assert_eq!(route(&c, "GET", &format!("/api/history?t={T}"), no_body).status, 404);
+        assert_eq!(route(&c, "POST", &format!("/api/milestone?t={T}"), no_body).status, 404);
+    }
+
+    #[test]
+    fn milestone_then_restore() {
+        let (c, seen, _tmp) = ctx_with_history();
+        let h = c.history.clone().unwrap();
+        c.cfg.lock().unwrap().gamma = 1.5;
+        let r = route(&c, "POST", &format!("/api/milestone?t={T}"), || Ok(br#"{"name":"  good one "}"#.to_vec()));
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+        let id = json(&r)["id"].as_str().unwrap().to_string();
+
+        let r = route(&c, "GET", &format!("/api/history?t={T}"), no_body);
+        assert_eq!(r.status, 200);
+        let rows = json(&r);
+        let row = rows.as_array().unwrap().iter().find(|e| e["id"] == id.as_str()).expect("listed");
+        assert_eq!(row["milestone"], true);
+        assert_eq!(row["name"], "good one");
+        assert_eq!(row["source"], "remote");
+        assert_eq!(row["broken"], false);
+
+        // Unnamed milestone is fine too.
+        let r = route(&c, "POST", &format!("/api/milestone?t={T}"), || Ok(b"{}".to_vec()));
+        assert_eq!(r.status, 200);
+
+        c.cfg.lock().unwrap().gamma = 2.8;
+        let body = format!(r#"{{"id":"{id}"}}"#).into_bytes();
+        let r = route(&c, "POST", &format!("/api/restore?t={T}"), || Ok(body));
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+        assert!((json(&r)["gamma"].as_f64().unwrap() - 1.5).abs() < 1e-6);
+        assert!((c.cfg.lock().unwrap().gamma - 1.5).abs() < 1e-6);
+        assert_eq!(c.rev.load(Ordering::SeqCst), 1);
+        assert_eq!(*seen.lock().unwrap(), vec![Change::Restored { displays_changed: false }]);
+        drop(h);
+    }
+
+    #[test]
+    fn restore_rejects_bad_ids() {
+        let (c, seen, _tmp) = ctx_with_history();
+        let url = format!("/api/restore?t={T}");
+        let cases: [(&[u8], u16); 6] = [
+            (br#"{"id":"../../blend"}"#, 400),
+            (br#"{"id":"C:\x"}"#, 400),
+            (br#"{"id":""}"#, 400),
+            (br#"{"id":"20990101-000000-000"}"#, 404),
+            (br#"{"nope":1}"#, 400),
+            (b"[]", 400),
+        ];
+        for (body, status) in cases {
+            let r = route(&c, "POST", &url, || Ok(body.to_vec()));
+            assert_eq!(r.status, status, "{}", String::from_utf8_lossy(body));
+        }
+        assert!(seen.lock().unwrap().is_empty());
+        assert_eq!(c.rev.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn restore_reports_display_change() {
+        let (c, seen, _tmp) = ctx_with_history();
+        c.cfg.lock().unwrap().output = r"\\.\DISPLAY3".into();
+        let r = route(&c, "POST", &format!("/api/milestone?t={T}"), || Ok(b"{}".to_vec()));
+        let id = json(&r)["id"].as_str().unwrap().to_string();
+        c.cfg.lock().unwrap().output = r"\\.\DISPLAY2".into();
+        let body = format!(r#"{{"id":"{id}"}}"#).into_bytes();
+        assert_eq!(route(&c, "POST", &format!("/api/restore?t={T}"), || Ok(body)).status, 200);
+        assert_eq!(*seen.lock().unwrap(), vec![Change::Restored { displays_changed: true }]);
     }
 
     fn no_body() -> Result<Vec<u8>, BodyError> {

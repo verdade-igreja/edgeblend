@@ -248,6 +248,7 @@ pub fn apply(cfg: &mut Config, op: &Op, undo: &mut Vec<GeometryUndo>) -> Result<
 }
 
 #[cfg(test)]
+#[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
     use edgeblend_config::Config;

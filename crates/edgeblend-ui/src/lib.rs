@@ -4,6 +4,7 @@
 mod blender;
 mod editor;
 mod history_ui;
+mod remote_ui;
 mod tray;
 
 pub use tray::show_panel as show_existing_panel;
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 use blender::Blender;
 use editor::CalibrationEditor;
 use history_ui::HistoryPanel;
+use remote_ui::RemotePanel;
 use edgeblend_config::{Config, Pattern, Preview};
 use edgeblend_engine::Status;
 use edgeblend_gpu::{display, PreviewImage};
@@ -61,6 +63,7 @@ struct App {
     save_error: Option<String>,
     editor: CalibrationEditor,
     history_panel: HistoryPanel,
+    remote_panel: RemotePanel,
 }
 
 impl App {
@@ -81,6 +84,7 @@ impl App {
             save_error: None,
             editor: CalibrationEditor::default(),
             history_panel: HistoryPanel::default(),
+            remote_panel: RemotePanel::default(),
         }
     }
 
@@ -96,9 +100,14 @@ impl App {
         self.blender.running()
     }
 
-    fn save(&mut self, cfg: &Config) {
-        self.save_error = cfg.save(&self.path).err().map(|e| format!("save failed: {e:#}"));
-        self.saved = cfg.clone();
+    fn save(&mut self) {
+        match self.blender.persist() {
+            Ok(saved) => {
+                self.saved = saved;
+                self.save_error = None;
+            }
+            Err(e) => self.save_error = Some(format!("save failed: {e:#}")),
+        }
     }
 }
 
@@ -320,6 +329,8 @@ impl eframe::App for App {
             }
 
             ui.separator();
+            self.remote_panel.row(ui, &self.blender);
+            ui.separator();
             history_applied = self.history_panel.show(ui, &self.blender.history, &cfg);
             ui.separator();
             if let Some(e) = &self.save_error {
@@ -345,6 +356,7 @@ impl eframe::App for App {
         let preview_handle = self.preview_tex.as_ref().map(|(t, _)| t.clone());
         self.editor
             .show(ctx, &mut cfg, preview_handle.as_ref());
+        self.remote_panel.window(ctx, &self.blender);
 
         if cfg.projectors != before.projectors {
             cfg.ensure_geometry();
@@ -352,7 +364,14 @@ impl eframe::App for App {
 
         if cfg != before {
             let display_changed = cfg.source != before.source || cfg.output != before.output;
-            *self.shared.lock().unwrap() = cfg.clone();
+            // Write back only what this frame changed: the phone remote or a hotkey may have
+            // edited other fields of the shared config since we copied it.
+            {
+                let mut shared = self.shared.lock().unwrap();
+                shared.merge_changes(&before, &cfg);
+                cfg = shared.clone();
+            }
+            self.blender.rev.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if display_changed && running {
                 self.start(); // window/capture are bound to displays: restart
             }
@@ -362,7 +381,7 @@ impl eframe::App for App {
         if cfg != self.saved {
             let t = *self.changed_at.get_or_insert_with(Instant::now);
             if t.elapsed() > Duration::from_millis(400) {
-                self.save(&cfg);
+                self.save();
                 self.changed_at = None;
             }
         } else {
@@ -386,9 +405,10 @@ impl eframe::App for App {
 impl Drop for App {
     fn drop(&mut self) {
         self.blender.stop();
+        self.blender.stop_remote();
         let cfg = self.shared.lock().unwrap().clone();
         if cfg != self.saved {
-            let _ = cfg.save(&self.path);
+            let _ = self.blender.persist();
         }
         self.blender.history.shutdown();
     }

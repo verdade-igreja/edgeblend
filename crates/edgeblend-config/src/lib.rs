@@ -229,9 +229,16 @@ impl Config {
             std::fs::create_dir_all(dir)?;
         }
         let body = toml::to_string_pretty(self)?;
-        let tmp = path.with_extension("toml.tmp");
+        // Unique temp name: the panel, the phone remote and history restore may save at once.
+        static SAVE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SAVE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("toml.tmp-{}-{n}", std::process::id()));
         std::fs::write(&tmp, format!("# edgeblend config (managed by the app UI)\n{body}"))?;
-        std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
+        std::fs::rename(&tmp, path)
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(&tmp);
+            })
+            .with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     }
 
@@ -386,5 +393,28 @@ mod tests {
             toml::to_string_pretty(&Config { gamma: 1.3, ..Config::default() }).unwrap()
         );
         assert_eq!(Config::parse_import(&text).unwrap().gamma, 1.3);
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_clash() {
+        let dir = std::env::temp_dir().join(format!("edgeblend-save-{}", std::process::id()));
+        let path = dir.join("blend.toml");
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        Config { gamma: 1.0 + i as f32 * 0.1, ..Config::default() }.save(&path).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert!(Config::load(&path).is_ok());
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(leftovers, 1, "temp files left behind");
     }
 }

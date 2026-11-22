@@ -961,6 +961,7 @@ dependencies = [
  "edgeblend-engine",
  "edgeblend-geom",
  "edgeblend-gpu",
+ "edgeblend-remote",
  "eframe",
  "rfd",
  "windows 0.58.0",

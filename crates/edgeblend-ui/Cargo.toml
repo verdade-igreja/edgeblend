@@ -17,3 +17,4 @@ edgeblend-config = { path = "../edgeblend-config" }
 edgeblend-engine = { path = "../edgeblend-engine" }
 edgeblend-geom = { path = "../edgeblend-geom" }
 edgeblend-gpu = { path = "../edgeblend-gpu" }
+edgeblend-remote = { path = "../edgeblend-remote" }

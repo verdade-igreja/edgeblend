@@ -11,6 +11,7 @@ mod state;
 mod token;
 
 use anyhow::Result;
+use edgeblend_config::history::Service as HistoryService;
 use edgeblend_config::Config;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ pub use apply::{
     apply, GeometryUndo, Handle, Op, CORNER_MAX, CORNER_MIN, CURVE_MAX, CURVE_MIN, GAMMA_MAX, GAMMA_MIN,
     MAX_PROJECTORS, NUDGE_MAX, UNDO_MAX,
 };
-pub use server::{OnChange, MAX_BODY};
+pub use server::{Change, HistoryRow, OnChange, MAX_BODY};
 pub use state::{snapshot, PatternInfo, State};
 
 /// Port tried first; the next free one above it is used if it is busy.
@@ -43,9 +44,16 @@ impl RemoteHandle {
 ///
 /// `rev` is bumped on every phone edit; the desktop bumps it on its own edits so the phone
 /// can order responses. `on_change` runs after each phone edit with no lock held.
-pub fn start(cfg: Arc<Mutex<Config>>, rev: Arc<AtomicU64>, on_change: OnChange, port: u16) -> Result<RemoteHandle> {
+/// `history` enables the history endpoints (list, save milestone, restore).
+pub fn start(
+    cfg: Arc<Mutex<Config>>,
+    rev: Arc<AtomicU64>,
+    history: Option<Arc<HistoryService>>,
+    on_change: OnChange,
+    port: u16,
+) -> Result<RemoteHandle> {
     let token = token::new_token()?;
-    let ctx = server::Ctx { cfg, rev, undo: Mutex::new(Vec::new()), token: token.clone(), on_change };
+    let ctx = server::Ctx { cfg, rev, undo: Mutex::new(Vec::new()), token: token.clone(), on_change, history };
     let server = server::Server::start(ctx, port)?;
     let port = server.port;
     let ips = net::lan_ips();
@@ -102,7 +110,7 @@ mod tests {
     fn serves_over_tcp_and_stops() {
         let cfg = Arc::new(Mutex::new(Config::default()));
         let rev = Arc::new(AtomicU64::new(0));
-        let h = start(cfg.clone(), rev.clone(), Arc::new(|| {}), 17931).expect("start");
+        let h = start(cfg.clone(), rev.clone(), None, Arc::new(|_| {}), 17931).expect("start");
         let port = h.port;
         let t = token_of(&h);
         assert_eq!(t.len(), 32);
@@ -139,8 +147,8 @@ mod tests {
     fn busy_port_falls_back_to_next() {
         let cfg = Arc::new(Mutex::new(Config::default()));
         let rev = Arc::new(AtomicU64::new(0));
-        let a = start(cfg.clone(), rev.clone(), Arc::new(|| {}), 17951).expect("first");
-        let b = start(cfg, rev, Arc::new(|| {}), a.port).expect("second");
+        let a = start(cfg.clone(), rev.clone(), None, Arc::new(|_| {}), 17951).expect("first");
+        let b = start(cfg, rev, None, Arc::new(|_| {}), a.port).expect("second");
         assert_ne!(a.port, b.port);
         assert!(b.port > a.port);
         assert_ne!(token_of(&a), token_of(&b));

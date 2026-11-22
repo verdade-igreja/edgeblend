@@ -22,6 +22,7 @@ const WM_TRAY: u32 = WM_APP + 1;
 const ID_SHOW: usize = 1;
 const ID_TOGGLE: usize = 2;
 const ID_QUIT: usize = 3;
+const ID_REMOTE: usize = 4;
 const ICON_ID: u32 = 1;
 
 struct TrayState {
@@ -130,6 +131,8 @@ unsafe fn context_menu(hwnd: HWND, state: &TrayState) {
     let toggle = if state.blender.running() { w!("Stop blending") } else { w!("Start blending") };
     let _ = AppendMenuW(menu, MF_STRING, ID_SHOW, w!("Show panel"));
     let _ = AppendMenuW(menu, MF_STRING, ID_TOGGLE, toggle);
+    let remote = if state.blender.remote_info().is_some() { w!("Remote control (on)…") } else { w!("Remote control…") };
+    let _ = AppendMenuW(menu, MF_STRING, ID_REMOTE, remote);
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("Quit"));
 
@@ -150,6 +153,11 @@ unsafe fn context_menu(hwnd: HWND, state: &TrayState) {
                 state.blender.start();
             }
             state.ctx.request_repaint();
+        }
+        ID_REMOTE => {
+            state.blender.start_remote(&state.ctx);
+            state.blender.remote_window.store(true, Ordering::SeqCst);
+            show_panel();
         }
         ID_QUIT => {
             state.blender.shutdown();
