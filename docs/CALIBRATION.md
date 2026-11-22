@@ -2,7 +2,7 @@
 
 ## Photo workflow
 
-1. In the control panel pick a **Pattern** (Diagnostic, Alignment grid, Flat gray, White) and toggle
+1. In the control panel pick a **Pattern** (Diagnostic, Alignment grid, Flat gray, White, Vertical/Horizontal/Diagonal lines) and toggle
    **Blend ramps** as needed.
 2. Photograph the wall from the audience position: one shot of the whole wall, plus close-ups of
    each seam. Hold the camera steady and avoid zoom. A phone is fine. You can keep the photos in a

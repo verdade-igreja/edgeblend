@@ -17,7 +17,7 @@ display. The output feeds a video-wall box (or splitter) that drives N projector
 
 - Blends 1-6 projectors left to right, with a distance-weighted blend that follows each seam's real overlap
 - Per-projector quad geometry (keystone, spill masking) edited visually in a calibration editor
-- Calibration patterns (Diagnostic, Alignment grid, flat gray, white) and live previews
+- Calibration patterns (Diagnostic, Alignment grid, flat gray, white, vertical/horizontal/diagonal lines) and live previews
 - Options for video-wall boxes that reverse the output order or mirror the picture
 - GPU-only capture, frame pacing with on-screen stats (repeated / skipped / missed vblanks)
 - Control panel with tray icon, single instance, crash watchdog, logon autostart
@@ -80,6 +80,23 @@ The installer can register a per-user logon Scheduled Task running
 `tools\autostart\install-autostart.ps1 -Apply` / `-Uninstall -Apply`
 (see [tools/autostart/README.md](tools/autostart/README.md)). It is a Scheduled Task and not a
 service because services run in session 0, which has no desktop to capture.
+
+## Config history
+
+Every change to your settings is kept as its own file in `%APPDATA%\edgeblend\history\`
+(one file per version, named by UTC time, e.g. `20261122-153012-123.toml`). A version is
+recorded a couple of seconds after you stop changing things, so dragging a handle does not
+create hundreds of files. Files are written once and never modified or deleted by edgeblend
+(they are about 2 KB each), so you can always go back.
+
+The **History** section of the panel lets you save a named milestone, see all versions
+(milestones are marked with a star), and restore one. Restoring never deletes anything; it
+becomes a new version. **Export...** and **Import...** write or read a single config file;
+importing first saves your current setup as a milestone called "before import".
+
+One file is the whole setup, including which projectors are switched off. To restore by hand,
+close edgeblend and copy a file from `history\` over `%APPDATA%\edgeblend\blend.toml`
+(the `[meta]` table at the end of a history file is ignored).
 
 ## Limitations
 

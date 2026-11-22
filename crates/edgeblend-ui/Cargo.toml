@@ -11,6 +11,7 @@ name = "edgeblend_ui"
 [dependencies]
 anyhow.workspace = true
 eframe.workspace = true
+rfd.workspace = true
 windows.workspace = true
 edgeblend-config = { path = "../edgeblend-config" }
 edgeblend-engine = { path = "../edgeblend-engine" }

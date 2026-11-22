@@ -27,6 +27,7 @@ tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false }
 getrandom = "0.2"
 if-addrs = "0.15"
+rfd = "0.15"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -39,6 +40,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Console",
     "Win32_System_LibraryLoader",
     "Win32_System_Performance",
+    "Win32_System_Time",
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_HiDpi",
