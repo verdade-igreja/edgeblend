@@ -1,0 +1,19 @@
+[package]
+name = "edgeblend"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Whole-desktop projector edge blending for Windows"
+
+[[bin]]
+name = "edgeblend"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+windows.workspace = true
+edgeblend-config = { path = "../edgeblend-config" }
+edgeblend-gpu = { path = "../edgeblend-gpu" }
+edgeblend-engine = { path = "../edgeblend-engine" }
+edgeblend-ui = { path = "../edgeblend-ui" }

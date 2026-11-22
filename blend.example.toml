@@ -1,0 +1,29 @@
+# edgeblend configuration. Saved changes are applied live (except source/output).
+# These are example values - run `edgeblend --list` for your display names.
+
+# Display whose desktop is captured: the "canvas" Windows renders to.
+source = '\\.\DISPLAY1'
+
+# Display that feeds the video-wall box / projectors. Must differ from source.
+output = '\\.\DISPLAY2'
+
+# Number of projectors, left to right. Output signal is still N equal tiles.
+projectors = 3
+
+# Nominal wall canvas (content / pattern coordinates), pixels.
+canvas = [5760, 1080]
+
+# Physical wall size in metres (width × height); used by the calibration editor.
+wall_m = [9.0, 1.6875]
+
+# Overlap fraction used when regenerating an even-split geometry (Reset geometry).
+overlap_frac = 0.25
+
+# Projector gamma used to make the blend sum to constant brightness.
+gamma = 2.2
+
+# Blend curve exponent: 1 = linear ramp, 2 = smooth S-curve (recommended).
+curve = 2.0
+
+# Draw the mouse cursor (Desktop Duplication does not include it).
+show_cursor = true

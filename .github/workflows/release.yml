@@ -1,0 +1,87 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read workspace version
+        id: ver
+        run: |
+          $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object { $_.name -eq 'edgeblend' }).version
+          if (-not $version) { throw 'package edgeblend not found in cargo metadata' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($tagVersion -ne $version) {
+              throw "Tag $env:GITHUB_REF_NAME does not match workspace version $version. Bump [workspace.package] version in Cargo.toml, or retag."
+            }
+          }
+
+      - name: Test
+        run: cargo test --release --workspace
+
+      - name: Build
+        run: cargo build --release -p edgeblend
+
+      - name: Ensure Inno Setup
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+
+      - name: Build installer
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" installer\edgeblend.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Prepare release assets
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          # Fixed name so releases/latest/download/edgeblend-setup.exe always works.
+          Copy-Item "dist\edgeblend-setup-$ver.exe" "dist\edgeblend-setup.exe"
+          $files = "dist\edgeblend-setup-$ver.exe", "dist\edgeblend-setup.exe"
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            "$h  $(Split-Path $f -Leaf)"
+          }
+          $lines | Set-Content -Path dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edgeblend-setup-${{ steps.ver.outputs.version }}
+          path: |
+            dist/edgeblend-setup-${{ steps.ver.outputs.version }}.exe
+            dist/edgeblend-setup.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          gh release create $env:GITHUB_REF_NAME "dist\edgeblend-setup-$ver.exe" "dist\edgeblend-setup.exe" "dist\SHA256SUMS.txt" --title "edgeblend $ver" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

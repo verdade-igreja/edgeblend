@@ -1,0 +1,15 @@
+[package]
+name = "edgeblend-config"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "edgeblend_config"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+edgeblend-geom = { path = "../edgeblend-geom" }
