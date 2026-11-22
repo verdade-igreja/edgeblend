@@ -25,4 +25,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Committed bundle is up to date
-        run: git diff --exit-code -- dist || (echo "::error::dist/index.html is stale: run 'npm run build' in crates/edgeblend-remote/web and commit it" && exit 1)
+        run: |
+          if ! git diff --exit-code -- dist; then
+            echo "::error::dist/index.html is stale - run 'npm run build' in crates/edgeblend-remote/web and commit it"
+            exit 1
+          fi
