@@ -139,8 +139,11 @@ mod tests {
         assert_eq!(http(port, &req).0, 413);
 
         h.stop();
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(TcpStream::connect(("127.0.0.1", port)).is_err(), "port still open after stop");
+        let closed = (0..20).any(|_| {
+            std::thread::sleep(Duration::from_millis(100));
+            TcpStream::connect(("127.0.0.1", port)).is_err()
+        });
+        assert!(closed, "port still open after stop");
     }
 
     #[test]

@@ -280,7 +280,7 @@ fn serve(ctx: &Ctx, mut req: tiny_http::Request) {
 pub struct Server {
     pub port: u16,
     stop: Arc<AtomicBool>,
-    http: Arc<tiny_http::Server>,
+    http: Option<Arc<tiny_http::Server>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -305,16 +305,16 @@ impl Server {
                 }
             })
             .context("spawn remote thread")?;
-        Ok(Self { port, stop, http, join: Some(join) })
+        Ok(Self { port, stop, http: Some(http), join: Some(join) })
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        self.http.unblock();
-        // Wake the accept loop so tiny_http's listener thread notices the shutdown.
-        let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.port)), Duration::from_millis(100));
+        if let Some(http) = &self.http {
+            http.unblock();
+        }
         if let Some(j) = self.join.take() {
             // Bounded wait: a stalled client must not hang Quit.
             let (tx, rx) = mpsc::channel();
@@ -324,6 +324,11 @@ impl Drop for Server {
             });
             let _ = rx.recv_timeout(STOP_JOIN_TIMEOUT);
         }
+        // Drop the last handle so tiny_http flags its accept thread to close, then wake that
+        // thread ourselves: tiny_http's own wake-up connects to the bound address (0.0.0.0),
+        // which fails on Windows and would leave the port listening forever.
+        drop(self.http.take());
+        let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.port)), Duration::from_millis(200));
     }
 }
 
