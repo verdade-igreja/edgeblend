@@ -93,6 +93,7 @@ service because services run in session 0, which has no desktop to capture.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Calibration](docs/CALIBRATION.md)
 - [Virtual display](docs/VIRTUAL-DISPLAY.md)
+- [Porting plan (macOS, Ubuntu)](docs/PORTING.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
