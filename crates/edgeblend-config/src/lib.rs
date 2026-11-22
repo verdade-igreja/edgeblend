@@ -57,15 +57,21 @@ pub enum Pattern {
     Alignment,
     Gray,
     White,
+    VLines,
+    HLines,
+    Diagonal,
 }
 
 impl Pattern {
-    pub const ALL: [Pattern; 5] = [
+    pub const ALL: [Pattern; 8] = [
         Pattern::Desktop,
         Pattern::Diagnostic,
         Pattern::Alignment,
         Pattern::Gray,
         Pattern::White,
+        Pattern::VLines,
+        Pattern::HLines,
+        Pattern::Diagonal,
     ];
 
     pub fn label(self) -> &'static str {
@@ -75,6 +81,9 @@ impl Pattern {
             Pattern::Alignment => "Alignment grid",
             Pattern::Gray => "Flat gray (blend check)",
             Pattern::White => "White",
+            Pattern::VLines => "Vertical lines",
+            Pattern::HLines => "Horizontal lines",
+            Pattern::Diagonal => "Diagonal lines",
         }
     }
 

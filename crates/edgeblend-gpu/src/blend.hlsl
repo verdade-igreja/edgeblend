@@ -7,7 +7,8 @@ cbuffer Params : register(b0) {
     float n;
     float gamma;
     float curve;
-    float pattern;       // 0 desktop, 1 diagnostic, 2 alignment, 3 gray, 4 white
+    float pattern;       // 0 desktop, 1 diagnostic, 2 alignment, 3 gray, 4 white,
+                         // 5 vertical lines, 6 horizontal lines, 7 diagonal lines
     float view;          // 0 = signal/output, 1 = wall light-sum simulation
     float mirror;        // 1 = flip output left/right
     float reverseOrder;  // 1 = box feeds projectors right-to-left
@@ -158,6 +159,23 @@ float3 alignmentPattern(float2 sp, float fi, float s) {
     return col;
 }
 
+// Thin white lines on black, drawn in wall space so they run continuously across
+// projectors. pw = wall pixels per output pixel; lines are ~2 output pixels wide.
+float3 linesPattern(float2 sp, float pw, float s, float mode) {
+    float pitch = 100.0 * s;
+    float2 g = abs(frac(sp / pitch + 0.5) - 0.5) * pitch;
+    float d;
+    if (mode < 0.5)       d = g.x;
+    else if (mode < 1.5)  d = g.y;
+    else {
+        float2 r = float2(sp.x + sp.y, sp.x - sp.y) * 0.70710678;
+        float2 gd = abs(frac(r / pitch + 0.5) - 0.5) * pitch;
+        d = min(gd.x, gd.y);
+    }
+    float a = saturate((pw - d) / pw + 0.5);
+    return float3(a, a, a);
+}
+
 float3 diagnosticPattern(float2 sp, float2 q, float2 uv, float fi, float s) {
     float3 P = projColor(fi);
     float3 c = float3(0, 0, 0);
@@ -247,7 +265,13 @@ float3 shade(float fi, float2 uv) {
     else if (isDiag)        c = diagnosticPattern(sp, q, uv, fi, s);
     else if (pattern < 2.5) c = alignmentPattern(sp, fi, s);
     else if (pattern < 3.5) c = float3(0.5, 0.5, 0.5);
-    else                    c = float3(1, 1, 1);
+    else if (pattern < 4.5) c = float3(1, 1, 1);
+    else {
+        // Wall pixels per output pixel, measured by one-pixel step in tile uv.
+        float2 spx = applyHF((int)fi, uv + float2(1.0 / max(tileW, 1.0), 0)) * float2(canvasW, canvasH);
+        float pw = max(length(spx - sp), 1e-3);
+        c = linesPattern(sp, pw, s, pattern - 5.0 + 0.01);
+    }
 
     if (showCursor > 0.5) {
         float2 d = sp - cursor * float2(canvasW, canvasH);
