@@ -3,3 +3,4 @@
 *.pdb
 *.log
 /calib
+node_modules/

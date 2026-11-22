@@ -211,6 +211,47 @@ impl Config {
         Ok(())
     }
 
+    /// Apply onto `self` only what changed from `before` to `after` (field by field; mute bits
+    /// one by one). Lets an editor that worked on a copy write back without overwriting edits
+    /// someone else (phone remote, hotkeys) made to the shared config in the meantime.
+    pub fn merge_changes(&mut self, before: &Config, after: &Config) {
+        // Exhaustive destructuring: a new field fails to compile until it is merged here.
+        let Config {
+            source,
+            output,
+            projectors,
+            canvas,
+            wall_m,
+            geometry,
+            overlap_frac,
+            gamma,
+            curve,
+            pattern,
+            blend_ramps,
+            show_cursor,
+            mirror,
+            reverse_order,
+            preview,
+            mute_mask,
+        } = after;
+        macro_rules! take {
+            ($($f:ident),*) => {$(
+                if *$f != before.$f {
+                    self.$f = $f.clone();
+                }
+            )*};
+        }
+        take!(
+            source, output, projectors, canvas, wall_m, geometry, overlap_frac, gamma, curve,
+            pattern, blend_ramps, show_cursor, mirror, reverse_order, preview
+        );
+        let flipped = before.mute_mask ^ *mute_mask;
+        self.mute_mask = (self.mute_mask & !flipped) | (*mute_mask & flipped);
+        if self.projectors as usize != self.geometry.len() {
+            self.ensure_geometry();
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(self.projectors >= 1, "projectors must be >= 1");
         ensure!(self.projectors <= 6, "projectors must be <= 6");
@@ -231,5 +272,59 @@ impl Config {
             "source and output must be different displays (it would capture itself)"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_keeps_concurrent_edits_to_other_fields() {
+        let before = Config::default();
+        // The panel changed gamma on its copy...
+        let mut mine = before.clone();
+        mine.gamma = 2.6;
+        // ...while someone else (phone, hotkey) changed the pattern in the shared config.
+        let mut shared = before.clone();
+        shared.pattern = Pattern::White;
+
+        shared.merge_changes(&before, &mine);
+        assert_eq!(shared.gamma, 2.6);
+        assert_eq!(shared.pattern, Pattern::White);
+    }
+
+    #[test]
+    fn merge_applies_mute_bits_individually() {
+        let before = Config::default();
+        let mut mine = before.clone();
+        mine.mute_mask = 0b001; // panel muted P1
+        let mut shared = before.clone();
+        shared.mute_mask = 0b100; // phone muted P3 meanwhile
+
+        shared.merge_changes(&before, &mine);
+        assert_eq!(shared.mute_mask, 0b101);
+    }
+
+    #[test]
+    fn merge_without_changes_is_a_no_op() {
+        let before = Config::default();
+        let mut shared = before.clone();
+        shared.show_cursor = !shared.show_cursor;
+        let expect = shared.clone();
+        shared.merge_changes(&before, &before.clone());
+        assert_eq!(shared, expect);
+    }
+
+    #[test]
+    fn merge_changed_projectors_brings_geometry_along() {
+        let before = Config::default();
+        let mut mine = before.clone();
+        mine.projectors = 2;
+        mine.ensure_geometry();
+        let mut shared = before.clone();
+        shared.merge_changes(&before, &mine);
+        assert_eq!(shared.projectors, 2);
+        assert_eq!(shared.geometry.len(), 2);
     }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "edgeblend-remote"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "edgeblend_remote"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+qrcode.workspace = true
+getrandom.workspace = true
+if-addrs.workspace = true
+edgeblend-config = { path = "../edgeblend-config" }
+
+[dev-dependencies]
