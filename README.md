@@ -17,7 +17,7 @@ display. The output feeds a video-wall box (or splitter) that drives N projector
 
 - Blends 1-6 projectors left to right, with a distance-weighted blend that follows each seam's real overlap
 - Per-projector quad geometry (keystone, spill masking) edited visually in a calibration editor
-- Calibration patterns (Diagnostic, Alignment grid, flat gray, white) and live previews
+- Calibration patterns (Diagnostic, Alignment grid, flat gray, white, vertical/horizontal/diagonal lines) and live previews
 - Options for video-wall boxes that reverse the output order or mirror the picture
 - GPU-only capture, frame pacing with on-screen stats (repeated / skipped / missed vblanks)
 - Control panel with tray icon, single instance, crash watchdog, logon autostart
