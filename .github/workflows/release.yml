@@ -35,6 +35,20 @@ jobs:
             }
           }
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check phone remote bundle is up to date
+        working-directory: crates/edgeblend-remote/web
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+          git diff --exit-code -- dist
+          if ($LASTEXITCODE -ne 0) { throw "crates/edgeblend-remote/web/dist is stale: run 'npm run build' there and commit it" }
+
       - name: Test
         run: cargo test --release --workspace
 

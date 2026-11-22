@@ -1,0 +1,28 @@
+name: remote-web
+
+# The phone remote page is built with Node but committed (crates/edgeblend-remote/web/dist),
+# so `cargo build` never needs Node. This fails if the committed bundle is stale.
+on:
+  push:
+    branches: [master]
+    paths: ['crates/edgeblend-remote/web/**', '.github/workflows/remote-web.yml']
+  pull_request:
+    paths: ['crates/edgeblend-remote/web/**', '.github/workflows/remote-web.yml']
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/edgeblend-remote/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/edgeblend-remote/web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Committed bundle is up to date
+        run: git diff --exit-code -- dist || (echo "::error::dist/index.html is stale: run 'npm run build' in crates/edgeblend-remote/web and commit it" && exit 1)

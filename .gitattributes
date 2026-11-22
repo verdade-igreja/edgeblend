@@ -1,0 +1,2 @@
+# Built phone page, embedded byte-for-byte by include_str! and compared in CI: never convert EOLs.
+crates/edgeblend-remote/web/dist/index.html -text

@@ -26,10 +26,18 @@ start otherwise. (Cross-GPU support is not implemented.)
 | `edgeblend-geom` | Pure math: homographies and the even-split seed quads (host-portable, unit-tested) |
 | `edgeblend-gpu` | DXGI display enumeration, D3D11 renderer (capture, swapchain, preview readback), `blend.hlsl` (hot-reloaded when it changes on disk) |
 | `edgeblend-engine` | The blend thread: output window, global hotkeys, frame loop, pacing, recovery |
-| `edgeblend-ui` | egui control panel, calibration editor, tray icon |
+| `edgeblend-remote` | Phone remote: LAN HTTP server (off by default, per-start random token), JSON edit ops, the embedded phone page (`web/`, built with Vue into one file); host-portable and unit-tested |
+| `edgeblend-ui` | egui control panel, calibration editor, tray icon, phone remote window |
 | `edgeblend` | Binary: CLI flags, DPI awareness, single instance, watchdog, log file |
 
 The config autosaves to `%APPDATA%\edgeblend\blend.toml`; `blend.example.toml` documents every key.
+
+The live config is one `Arc<Mutex<Config>>` shared by the panel, the blend thread (hotkeys) and
+the phone remote. The panel edits a per-frame copy and writes back only the fields it changed
+(`Config::merge_changes`), so concurrent edits from the phone or a hotkey are not overwritten. A
+shared revision counter, bumped by panel and phone edits, lets the phone discard stale poll
+responses. All blend.toml writes go through `Blender::persist`, which serializes them and never
+holds the config lock during I/O.
 
 ## Geometry model
 

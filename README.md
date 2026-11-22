@@ -21,6 +21,7 @@ display. The output feeds a video-wall box (or splitter) that drives N projector
 - Options for video-wall boxes that reverse the output order or mirror the picture
 - GPU-only capture, frame pacing with on-screen stats (repeated / skipped / missed vblanks)
 - Control panel with tray icon, single instance, crash watchdog, logon autostart
+- Optional phone remote over the local network: switch projectors on/off, pick patterns, restore history versions
 - Recovers from GPU resets, display changes and unplugged displays
 
 ## Requirements
@@ -69,9 +70,31 @@ Global hotkeys: `Ctrl+Alt+T` test pattern, `Ctrl+Alt+C` cursor, `Ctrl+Alt+Q` sto
 ## Tray and background behaviour
 
 Closing the panel (X) hides it to the tray icon. Left-click the icon to show the panel; the menu has
-Show panel, Start/Stop blending and Quit (the only way to exit). A second launch brings the existing
+Show panel, Start/Stop blending, Remote control… and Quit (the only way to exit). A second launch brings the existing
 panel to the front. Fatal errors, panics and watchdog restarts are logged to
 `%APPDATA%\edgeblend\edgeblend.log`.
+
+## Phone remote
+
+Control edgeblend from a phone on the same network: turn single projectors on and off, switch
+between Desktop and the test patterns, and save or restore config history versions.
+
+1. Right-click the tray icon and choose **Remote control…** (or use **Phone remote → Start…** in the
+   panel). The panel shows a QR code and the link.
+2. Scan the QR code with a phone on the **same Wi-Fi / network** as the PC.
+3. **Stop remote** (or Quit) closes the port again.
+
+The remote is off by default and nothing listens on the network until you start it. The link
+carries a random key that changes every time the remote starts, so old links stop working. It is
+plain HTTP: use it on a network you trust. Port 7878 is tried first (the next free port if busy).
+
+- **Windows Firewall** asks the first time the remote starts. Allow it on **Private networks** only.
+  If your network is set to Public, the phone can't connect: set the network to Private, or allow
+  the app for that profile yourself.
+- **Guest Wi-Fi** and some public or corporate networks isolate clients from each other, so the phone
+  can't reach the PC even when both are on the same Wi-Fi.
+- The PC's address can change (DHCP). If the phone can't connect, start the remote again and scan
+  the new QR code.
 
 ## Autostart
 

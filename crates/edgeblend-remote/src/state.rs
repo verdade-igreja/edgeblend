@@ -84,8 +84,8 @@ mod tests {
 
     #[test]
     fn snapshot_reports_mutes_per_projector() {
-        let mut cfg = Config::default();
-        cfg.mute_mask = 0b101 | (1 << 9); // stray high bit must not add entries
+        // A stray high bit must not add entries.
+        let cfg = Config { mute_mask: 0b101 | (1 << 9), ..Config::default() };
         let s = snapshot(&cfg, 7);
         assert_eq!(s.rev, 7);
         assert_eq!(s.projectors, 3);
@@ -95,8 +95,7 @@ mod tests {
 
     #[test]
     fn snapshot_json_shape() {
-        let mut cfg = Config::default();
-        cfg.pattern = Pattern::Gray;
+        let cfg = Config { pattern: Pattern::Gray, ..Config::default() };
         let v = serde_json::to_value(snapshot(&cfg, 1)).unwrap();
         assert_eq!(v["pattern"], "gray");
         assert_eq!(v["patterns"][0]["name"], "desktop");
