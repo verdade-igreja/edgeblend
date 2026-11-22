@@ -2,6 +2,8 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod history;
+
 use edgeblend_geom::even_split;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,9 +37,8 @@ pub struct Config {
     pub reverse_order: bool,
     /// Live preview shown in the control panel.
     pub preview: Preview,
-    /// Bit i set = projector i is blacked out (diagnostics). Runtime only, never saved,
-    /// so a projector can't stay accidentally dark at the next start.
-    #[serde(skip)]
+    /// Bit i set = projector i is blacked out (diagnostics). Saved like everything else so a
+    /// config file is the whole setup; the panel warns while any projector is off.
     pub mute_mask: u32,
 }
 
@@ -179,6 +180,20 @@ impl Config {
         Ok(cfg)
     }
 
+    /// Parse config text from any source: a plain blend.toml, an export, or a history
+    /// snapshot (its `[meta]` table is ignored). Validates; on error nothing is applied.
+    pub fn parse_import(text: &str) -> Result<Self> {
+        let mut cfg: Self = toml::from_str(text).context("not a valid edgeblend config file")?;
+        cfg.ensure_geometry();
+        cfg.validate().context("config values are invalid")?;
+        Ok(cfg)
+    }
+
+    /// Atomic write of this config to an arbitrary path (export); same format as `save`.
+    pub fn export(&self, path: &Path) -> Result<()> {
+        self.save(path)
+    }
+
     /// Load, or defaults if the file is missing or broken.
     pub fn load_or_default(path: &Path) -> Self {
         if !path.exists() {
@@ -231,5 +246,46 @@ impl Config {
             "source and output must be different displays (it would capture itself)"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_file_without_mute_mask_loads_as_zero() {
+        let c = Config::parse_import("gamma = 2.0\n").unwrap();
+        assert_eq!(c.mute_mask, 0);
+    }
+
+    #[test]
+    fn mute_mask_is_persisted() {
+        let c = Config { mute_mask: 5, ..Config::default() };
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert_eq!(Config::parse_import(&text).unwrap().mute_mask, 5);
+    }
+
+    #[test]
+    fn import_accepts_plain_file() {
+        let text = toml::to_string_pretty(&Config { gamma: 1.7, ..Config::default() }).unwrap();
+        assert_eq!(Config::parse_import(&text).unwrap().gamma, 1.7);
+    }
+
+    #[test]
+    fn import_rejects_garbage_and_invalid() {
+        assert!(Config::parse_import("this is = not [toml").is_err());
+        assert!(Config::parse_import("gamma = \"x\"").is_err());
+        assert!(Config::parse_import("projectors = 99\n").is_err());
+        assert!(Config::parse_import("gamma = -1.0\n").is_err());
+    }
+
+    #[test]
+    fn import_ignores_history_meta() {
+        let text = format!(
+            "{}\n[meta]\ncreated = \"2026-01-01T00:00:00.000Z\"\ncreated_ms = 1\nkind = \"milestone\"\nsource = \"desktop\"\n",
+            toml::to_string_pretty(&Config { gamma: 1.3, ..Config::default() }).unwrap()
+        );
+        assert_eq!(Config::parse_import(&text).unwrap().gamma, 1.3);
     }
 }

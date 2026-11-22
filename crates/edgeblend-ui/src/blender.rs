@@ -5,12 +5,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use edgeblend_config::history::Service as HistoryService;
 use edgeblend_config::Config;
 use edgeblend_engine::{Engine, Status};
 use edgeblend_gpu::PreviewImage;
 
 pub struct Blender {
     path: PathBuf,
+    /// Config version history: list / save_milestone / restore / import_text (also for a remote UI).
+    pub history: Arc<HistoryService>,
     pub shared: Arc<Mutex<Config>>,
     pub status: Arc<Mutex<Status>>,
     pub preview: Arc<Mutex<Option<PreviewImage>>>,
@@ -21,9 +24,12 @@ pub struct Blender {
 
 impl Blender {
     pub fn new(path: PathBuf, cfg: Config) -> Arc<Self> {
+        let shared = Arc::new(Mutex::new(cfg));
+        let history = HistoryService::start(shared.clone(), path.clone());
         Arc::new(Self {
             path,
-            shared: Arc::new(Mutex::new(cfg)),
+            history,
+            shared,
             status: Arc::new(Mutex::new(Status { info: "stopped".into(), ..Default::default() })),
             preview: Arc::new(Mutex::new(None)),
             engine: Mutex::new(None),
@@ -56,5 +62,6 @@ impl Blender {
         self.stop();
         let cfg = self.shared.lock().unwrap().clone();
         let _ = cfg.save(&self.path);
+        self.history.shutdown();
     }
 }

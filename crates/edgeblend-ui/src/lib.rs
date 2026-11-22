@@ -3,6 +3,7 @@
 
 mod blender;
 mod editor;
+mod history_ui;
 mod tray;
 
 pub use tray::show_panel as show_existing_panel;
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use blender::Blender;
 use editor::CalibrationEditor;
+use history_ui::HistoryPanel;
 use edgeblend_config::{Config, Pattern, Preview};
 use edgeblend_engine::Status;
 use edgeblend_gpu::{display, PreviewImage};
@@ -58,6 +60,7 @@ struct App {
     changed_at: Option<Instant>,
     save_error: Option<String>,
     editor: CalibrationEditor,
+    history_panel: HistoryPanel,
 }
 
 impl App {
@@ -77,6 +80,7 @@ impl App {
             changed_at: None,
             save_error: None,
             editor: CalibrationEditor::default(),
+            history_panel: HistoryPanel::default(),
         }
     }
 
@@ -111,10 +115,11 @@ impl eframe::App for App {
         }
         // Work on a copy; hotkeys on the blend thread may also change the shared config.
         let mut cfg = self.shared.lock().unwrap().clone();
-        let before = cfg.clone();
+        let mut before = cfg.clone();
         let status = self.status.lock().unwrap().clone();
         let running = self.running();
         let (mut want_start, mut want_stop) = (false, false);
+        let mut history_applied = false;
 
         // Snapshot latest preview for the UI (drop the lock before painting).
         let preview_snap = self.preview.lock().unwrap().clone();
@@ -141,6 +146,13 @@ impl eframe::App for App {
                 if !running {
                     ui.colored_label(egui::Color32::from_rgb(220, 70, 70), err);
                 }
+            }
+            let off = (0..cfg.projectors.clamp(1, 6)).filter(|i| cfg.mute_mask & (1 << i) != 0).count();
+            if off > 0 {
+                ui.colored_label(
+                    egui::Color32::from_rgb(230, 160, 40),
+                    format!("⚠ {off} projector{} OFF (blacked out; saved in the config)", if off == 1 { " is" } else { "s are" }),
+                );
             }
             ui.separator();
 
@@ -308,12 +320,26 @@ impl eframe::App for App {
             }
 
             ui.separator();
+            history_applied = self.history_panel.show(ui, &self.blender.history, &cfg);
+            ui.separator();
             if let Some(e) = &self.save_error {
                 ui.colored_label(egui::Color32::from_rgb(220, 70, 70), e);
             }
             ui.small(format!("Settings autosave to {}", self.path.display()));
             ui.small("Ctrl+Alt+Q stops blending. Changes apply live.");
         });
+
+        if history_applied {
+            // Restore / import replaced the shared config (and saved blend.toml): adopt it.
+            let old_displays = (cfg.source.clone(), cfg.output.clone());
+            cfg = self.shared.lock().unwrap().clone();
+            before = cfg.clone();
+            if running && (cfg.source != old_displays.0 || cfg.output != old_displays.1) {
+                want_start = true; // capture/output are bound to displays: restart
+            }
+            self.saved = cfg.clone();
+            self.changed_at = None;
+        }
 
         // Calibration editor viewport (separate OS window; edits the same cfg).
         let preview_handle = self.preview_tex.as_ref().map(|(t, _)| t.clone());
@@ -364,6 +390,7 @@ impl Drop for App {
         if cfg != self.saved {
             let _ = cfg.save(&self.path);
         }
+        self.blender.history.shutdown();
     }
 }
 
@@ -381,7 +408,7 @@ fn list_displays() -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// P1..Pn checkboxes: untick to black out that projector (diagnostics; not saved).
+/// P1..Pn checkboxes: untick to black out that projector (diagnostics; saved with the config).
 pub(crate) fn projector_switches(ui: &mut egui::Ui, cfg: &mut Config) {
     ui.horizontal(|ui| {
         let n = cfg.projectors.clamp(1, 6);

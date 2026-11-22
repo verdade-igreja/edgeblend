@@ -81,6 +81,23 @@ The installer can register a per-user logon Scheduled Task running
 (see [tools/autostart/README.md](tools/autostart/README.md)). It is a Scheduled Task and not a
 service because services run in session 0, which has no desktop to capture.
 
+## Config history
+
+Every change to your settings is kept as its own file in `%APPDATA%\edgeblend\history\`
+(one file per version, named by UTC time, e.g. `20261122-153012-123.toml`). A version is
+recorded a couple of seconds after you stop changing things, so dragging a handle does not
+create hundreds of files. Files are written once and never modified or deleted by edgeblend
+(they are about 2 KB each), so you can always go back.
+
+The **History** section of the panel lets you save a named milestone, see all versions
+(milestones are marked with a star), and restore one. Restoring never deletes anything; it
+becomes a new version. **Export...** and **Import...** write or read a single config file;
+importing first saves your current setup as a milestone called "before import".
+
+One file is the whole setup, including which projectors are switched off. To restore by hand,
+close edgeblend and copy a file from `history\` over `%APPDATA%\edgeblend\blend.toml`
+(the `[meta]` table at the end of a history file is ignored).
+
 ## Limitations
 
 - Source and output must be on the same GPU.
