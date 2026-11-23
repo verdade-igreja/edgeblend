@@ -162,7 +162,8 @@ float3 alignmentPattern(float2 sp, float fi, float s) {
 // Thin white lines on black, drawn in wall space so they run continuously across
 // projectors. pw = wall pixels per output pixel; lines are ~2 output pixels wide.
 float3 linesPattern(float2 sp, float pw, float s, float mode) {
-    float pitch = 100.0 * s;
+    // Vertical lines are 3x denser than horizontal/diagonal, for finer horizontal tuning.
+    float pitch = (mode < 0.5 ? 100.0 / 3.0 : 100.0) * s;
     float2 g = abs(frac(sp / pitch + 0.5) - 0.5) * pitch;
     float d;
     if (mode < 0.5)       d = g.x;
