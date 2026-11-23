@@ -34,6 +34,7 @@ export type Op =
   | { op: 'pattern'; value: string }
   | { op: 'set_mute'; projector: number; muted: boolean }
   | { op: 'nudge'; projector: number; handle: Handle; dx: number; dy: number }
+  | { op: 'nudge_all'; handle: Handle; dx: number; dy: number }
   | { op: 'set_corners'; projector: number; corners: Corners }
   | { op: 'blend_ramps'; value: boolean }
   | { op: 'gamma'; value: number }

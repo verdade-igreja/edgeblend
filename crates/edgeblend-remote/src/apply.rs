@@ -29,6 +29,8 @@ pub struct GeometryUndo {
     pub previous: [[f32; 2]; 4],
     /// Corners immediately after the phone op (stale if someone else edited since).
     pub post: [[f32; 2]; 4],
+    /// Entries sharing a group (one `nudge_all`) are undone together.
+    pub group: u64,
 }
 
 /// Selection target for a nudge: corner `c0..c3`, edge `e0..e3`, or whole quad `all`.
@@ -88,6 +90,12 @@ pub enum Op {
         dx: f32,
         dy: f32,
     },
+    /// Same as `Nudge`, applied to every projector at once (one undo step).
+    NudgeAll {
+        handle: String,
+        dx: f32,
+        dy: f32,
+    },
     SetCorners {
         projector: usize,
         corners: [[f32; 2]; 4],
@@ -111,6 +119,32 @@ pub enum Op {
         value: f32,
     },
     Undo,
+}
+
+fn next_group(undo: &[GeometryUndo]) -> u64 {
+    undo.last().map_or(0, |u| u.group.wrapping_add(1))
+}
+
+fn nudge_one(
+    cfg: &mut Config,
+    projector: usize,
+    h: Handle,
+    dx: f32,
+    dy: f32,
+    group: u64,
+    undo: &mut Vec<GeometryUndo>,
+) {
+    let dx = dx.clamp(-NUDGE_MAX, NUDGE_MAX);
+    let dy = dy.clamp(-NUDGE_MAX, NUDGE_MAX);
+    let previous = cfg.geometry[projector].corners;
+    let corners = &mut cfg.geometry[projector].corners;
+    for &ci in h.corners() {
+        corners[ci][0] += dx;
+        corners[ci][1] += dy;
+    }
+    clamp_corners(corners);
+    let post = *corners;
+    push_geometry_undo(undo, GeometryUndo { projector, previous, post, group });
 }
 
 fn push_geometry_undo(undo: &mut Vec<GeometryUndo>, entry: GeometryUndo) {
@@ -161,24 +195,19 @@ pub fn apply(cfg: &mut Config, op: &Op, undo: &mut Vec<GeometryUndo>) -> Result<
             require_projector(cfg, *projector)?;
             let h = Handle::parse(handle)
                 .ok_or_else(|| anyhow::anyhow!("invalid handle '{handle}'"))?;
-            let dx = dx.clamp(-NUDGE_MAX, NUDGE_MAX);
-            let dy = dy.clamp(-NUDGE_MAX, NUDGE_MAX);
-            let previous = cfg.geometry[*projector].corners;
-            let corners = &mut cfg.geometry[*projector].corners;
-            for &ci in h.corners() {
-                corners[ci][0] += dx;
-                corners[ci][1] += dy;
+            let group = next_group(undo);
+            nudge_one(cfg, *projector, h, *dx, *dy, group, undo);
+        }
+        Op::NudgeAll { handle, dx, dy } => {
+            require_finite(*dx, "dx")?;
+            require_finite(*dy, "dy")?;
+            let h = Handle::parse(handle)
+                .ok_or_else(|| anyhow::anyhow!("invalid handle '{handle}'"))?;
+            ensure!(!cfg.geometry.is_empty(), "no projectors");
+            let group = next_group(undo);
+            for p in 0..cfg.geometry.len() {
+                nudge_one(cfg, p, h, *dx, *dy, group, undo);
             }
-            clamp_corners(corners);
-            let post = *corners;
-            push_geometry_undo(
-                undo,
-                GeometryUndo {
-                    projector: *projector,
-                    previous,
-                    post,
-                },
-            );
         }
         Op::SetCorners {
             projector,
@@ -193,12 +222,14 @@ pub fn apply(cfg: &mut Config, op: &Op, undo: &mut Vec<GeometryUndo>) -> Result<
             let mut next = *corners;
             clamp_corners(&mut next);
             cfg.geometry[*projector].corners = next;
+            let group = next_group(undo);
             push_geometry_undo(
                 undo,
                 GeometryUndo {
                     projector: *projector,
                     previous,
                     post: next,
+                    group,
                 },
             );
         }
@@ -233,15 +264,23 @@ pub fn apply(cfg: &mut Config, op: &Op, undo: &mut Vec<GeometryUndo>) -> Result<
             let Some(top) = undo.last() else {
                 bail!("nothing to undo");
             };
-            if top.projector >= cfg.geometry.len()
-                || !corners_eq(&cfg.geometry[top.projector].corners, &top.post)
-            {
-                // Projector was changed by someone else since this phone op.
+            let group = top.group;
+            let start = undo
+                .iter()
+                .rposition(|u| u.group != group)
+                .map_or(0, |i| i + 1);
+            let stale = undo[start..].iter().any(|u| {
+                u.projector >= cfg.geometry.len()
+                    || !corners_eq(&cfg.geometry[u.projector].corners, &u.post)
+            });
+            if stale {
+                // A projector was changed by someone else since this phone op.
                 undo.clear();
                 bail!("nothing to undo");
             }
-            let entry = undo.pop().expect("checked last");
-            cfg.geometry[entry.projector].corners = entry.previous;
+            for entry in undo.drain(start..).rev() {
+                cfg.geometry[entry.projector].corners = entry.previous;
+            }
         }
     }
     Ok(())
@@ -597,5 +636,31 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<Op>(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn nudge_all_moves_every_projector_and_undoes_as_one() {
+        let mut cfg = cfg3();
+        let snap = cfg.geometry.clone();
+        let mut undo = Vec::new();
+        let one = Op::Nudge { projector: 0, handle: "c0".into(), dx: 0.01, dy: 0.0 };
+        apply(&mut cfg, &one, &mut undo).unwrap();
+        let after_first = cfg.geometry.clone();
+        let op: Op =
+            serde_json::from_str(r#"{"op":"nudge_all","handle":"e0","dx":0,"dy":-0.02}"#).unwrap();
+        apply(&mut cfg, &op, &mut undo).unwrap();
+        for p in 0..3 {
+            for c in [0, 1] {
+                let want = after_first[p].corners[c][1] - 0.02;
+                assert!((cfg.geometry[p].corners[c][1] - want).abs() < 1e-6);
+            }
+            assert_eq!(cfg.geometry[p].corners[2], after_first[p].corners[2]);
+        }
+        assert_eq!(undo.len(), 4);
+        apply(&mut cfg, &Op::Undo, &mut undo).unwrap();
+        assert_eq!(cfg.geometry, after_first);
+        assert_eq!(undo.len(), 1);
+        apply(&mut cfg, &Op::Undo, &mut undo).unwrap();
+        assert_eq!(cfg.geometry, snap);
     }
 }

@@ -11,12 +11,37 @@ import WallView from '@/components/remote/WallView.vue'
 import ProjectorSwitches from '@/components/remote/ProjectorSwitches.vue'
 import PatternPicker from '@/components/remote/PatternPicker.vue'
 import HistoryPanel from '@/components/remote/HistoryPanel.vue'
+import GeometryView from '@/components/remote/GeometryView.vue'
+import AdjustPanel from '@/components/remote/AdjustPanel.vue'
+import BlendPanel from '@/components/remote/BlendPanel.vue'
+import type { Handle, Op } from '@/api'
 
 const { state, connection, edit, adopt } = useRemote()
 
-/** Selected projector: tap a rectangle. Slice 2 hangs edge selection and arrows off this. */
+/** Selected projector: tap a rectangle. */
 const selected = ref<number | null>(null)
 const tab = ref('control')
+
+/** Adjust tab: projector (or all) and the part the arrows move. */
+const target = ref<number | 'all'>(0)
+const handle = ref<Handle>('all')
+
+function selectFromWall(i: number | null) {
+  selected.value = i
+  if (i !== null) target.value = i
+}
+
+/** Send for the Adjust/Blend panels: true when applied, errors shown as a toast. */
+async function send(op: Op, optimistic?: (s: State) => State): Promise<boolean> {
+  try {
+    const ok = await edit(op, optimistic)
+    if (!ok) toast.error('Not applied: cannot reach edgeblend')
+    return ok
+  } catch (e) {
+    toast.error(e instanceof ApiError ? e.message : 'Not applied')
+    return false
+  }
+}
 
 const status = computed(() => {
   switch (connection.value) {
@@ -73,19 +98,51 @@ function setPattern(name: string) {
     </Card>
 
     <template v-else-if="state">
+      <GeometryView
+        v-if="tab === 'adjust'"
+        :geometry="state.geometry"
+        :wall="state.wall_m"
+        :muted="state.muted"
+        :target="target"
+        :handle="handle"
+        @select="target = $event"
+      />
       <WallView
+        v-else
         :projectors="state.projectors"
         :overlap="state.overlap_frac"
         :muted="state.muted"
         :selected="selected"
-        @select="selected = $event"
+        @select="selectFromWall"
       />
 
       <Tabs v-model="tab" class="gap-4">
-        <TabsList class="grid h-12 w-full grid-cols-2">
+        <TabsList class="grid h-12 w-full grid-cols-3">
           <TabsTrigger value="control" class="text-base">Control</TabsTrigger>
+          <TabsTrigger value="adjust" class="text-base">Adjust</TabsTrigger>
           <TabsTrigger value="history" class="text-base">History</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="adjust" class="space-y-4">
+          <Card>
+            <CardHeader><CardTitle>Position</CardTitle></CardHeader>
+            <CardContent>
+              <AdjustPanel
+                v-model:target="target"
+                v-model:handle="handle"
+                :state="state"
+                :disabled="connection !== 'online'"
+                :send="send"
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Blend</CardTitle></CardHeader>
+            <CardContent>
+              <BlendPanel :state="state" :disabled="connection !== 'online'" :send="send" />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="control" class="space-y-4">
           <Card>
